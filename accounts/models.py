@@ -6,6 +6,7 @@ from django.contrib.auth.models import (
 )
 from django.core.validators import RegexValidator
 from django.utils import timezone
+import secrets
 
 
 _phone_validator = RegexValidator(
@@ -51,6 +52,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class Profile(models.Model):
+    """User profile model for storing additional user information."""
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     full_name = models.CharField(max_length=255, blank=True)
     bio = models.TextField(blank=True)
@@ -58,3 +60,50 @@ class Profile(models.Model):
 
     def __str__(self):
         return f"Profile of {self.user.phone_number}"
+
+
+class PasswordResetToken(models.Model):
+    """
+    Model for storing password reset tokens.
+    Each token is associated with a user and expires after a set time.
+    """
+    user = models.OneToOneField(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name="password_reset_token"
+    )
+    token = models.CharField(max_length=32, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Password Reset Token"
+        verbose_name_plural = "Password Reset Tokens"
+
+    def __str__(self):
+        return f"Reset token for {self.user.phone_number}"
+
+    @staticmethod
+    def generate_token():
+        """
+        Generate a secure random token for password reset.
+
+        Returns:
+            str: 32-character hexadecimal token
+        """
+        return secrets.token_hex(16)
+
+    def is_valid(self):
+        """
+        Check if the token is still valid (not expired and not used).
+
+        Returns:
+            bool: True if token is valid, False otherwise
+        """
+        return timezone.now() < self.expires_at and not self.is_used
+
+    def mark_as_used(self):
+        """Mark the token as used after password reset."""
+        self.is_used = True
+        self.save(update_fields=["is_used"])
