@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # PostgreSQL Database Service
+  # ============================================================================
+  db:
+    image: postgres:15-alpine
+    container_name: user_management_db
+    environment:
+      POSTGRES_DB: ${DJANGO_DB_NAME:-user_management}
+      POSTGRES_USER: ${DJANGO_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DJANGO_DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DJANGO_DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
+
+  # ============================================================================
+  # Django Application Service
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: user_management_app
+    command: python manage.py runserver 0.0.0.0:8000
+    environment:
+      # Django Settings
+      DEBUG: "True"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-insecure-key-change-in-production}
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,app
+      
+      # Database Configuration
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_NAME: ${DJANGO_DB_NAME:-user_management}
+      DJANGO_DB_USER: ${DJANGO_DB_USER:-postgres}
+      DJANGO_DB_PASSWORD: ${DJANGO_DB_PASSWORD:-postgres}
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: 5432
+      
+      # SMS Configuration
+      SMS_PROVIDER: mock
+      SMS_API_KEY: ${SMS_API_KEY:-dev-api-key}
+      SMS_SENDER_ID: ${SMS_SENDER_ID:-UserManagement}
+      
+      # Optional: Twilio Configuration (uncomment if using)
+      # TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      # TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      # TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER}
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - /app/__pycache__
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  app_network:
+    driver: bridge

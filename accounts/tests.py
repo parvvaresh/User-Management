@@ -29,7 +29,8 @@ class AuthFlowTests(APITestCase):
             url, {
                 "phone_number": "09121111111",
                 "username": "newbie",
-                "password": "S3cur3pass!"
+                "password": "S3cur3pass!",
+                "password_confirm": "S3cur3pass!",
             }, format="json"
         )
         print(res.data)

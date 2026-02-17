@@ -48,15 +48,15 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """
-        Create user with password and associated profile.
+        Create user with password. Profile is automatically created by signal.
         """
         password = validated_data.pop("password")
         user = User.objects.create(**validated_data)
         user.set_password(password)
         user.save()
 
-        # Create associated profile
-        Profile.objects.create(user=user)
+        # Profile is automatically created by post_save signal
+        # No need to manually create it here
 
         return user
 

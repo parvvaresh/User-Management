@@ -4,6 +4,13 @@ djangorestframework==3.14.0
 djangorestframework-simplejwt==5.2.2
 python-dotenv==1.0.0
 
+# Testing
+pytest==7.4.0
+pytest-django==4.5.2
+pytest-cov==4.1.0
+pytest-mock==3.11.1
+coverage==7.3.0
+
 # Optional: SMS Providers
 # Uncomment the provider you want to use
 
@@ -14,11 +21,6 @@ python-dotenv==1.0.0
 # requests==2.31.0
 
 # Development Dependencies (optional)
-# For testing
-pytest==7.4.0
-pytest-django==4.5.2
-coverage==7.3.0
-
 # For code quality
 black==23.9.0
 flake8==6.0.0
@@ -26,3 +28,4 @@ isort==5.12.0
 
 # Database (for production)
 # psycopg2-binary==2.9.7  # PostgreSQL
+
