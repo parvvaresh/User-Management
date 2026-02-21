@@ -22,7 +22,7 @@ coverage==7.3.0
 
 # Development Dependencies (optional)
 # For code quality
-black==23.9.0
+black==26.1.0
 flake8==6.0.0
 isort==5.12.0
 
