@@ -1,0 +1,282 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/user-management
+
+jobs:
+  lint-and-format:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install black flake8 isort bandit safety
+
+    - name: Run Black (Code Formatting)
+      run: black --check --diff .
+
+    - name: Run isort (Import Sorting)  
+      run: isort --check-only --diff .
+
+    - name: Run Flake8 (Linting)
+      run: flake8 . --max-line-length=88 --extend-ignore=E203,W503
+
+    - name: Run Bandit (Security Linting)
+      run: bandit -r . -x tests/ || true
+
+    - name: Check for known security vulnerabilities
+      run: safety check --json || true
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install psycopg2-binary
+
+    - name: Set up test environment
+      run: |
+        cp .env.example .env || echo "SECRET_KEY=test-secret-key-for-ci" > .env
+        echo "DEBUG=True" >> .env
+        echo "DATABASE_URL=postgres://test_user:test_password@localhost:5432/test_db" >> .env
+
+    - name: Run migrations
+      run: python manage.py migrate
+
+    - name: Run tests with coverage
+      run: |
+        pytest --cov=. --cov-report=xml --cov-report=html --cov-report=term-missing
+        
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: Archive coverage reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: coverage-report
+        path: htmlcov/
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [lint-and-format, test]
+    if: github.event_name != 'pull_request'
+    
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Set up Kustomize
+      run: |
+        curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+        sudo mv kustomize /usr/local/bin/
+
+    - name: Deploy to Staging
+      env:
+        KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_STAGING }}
+        IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
+      run: |
+        echo "$KUBE_CONFIG_DATA" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+        
+        # Update image tag in deployment
+        kubectl set image deployment/django-deployment \
+          django-app=${{ needs.build-and-push.outputs.image-tag }} \
+          -n user-management-staging
+        
+        # Wait for rollout
+        kubectl rollout status deployment/django-deployment -n user-management-staging --timeout=300s
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Deploy to Production
+      env:
+        KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+        IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
+      run: |
+        echo "$KUBE_CONFIG_DATA" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+        
+        # Apply all Kubernetes manifests
+        kubectl apply -f k8s/namespace.yaml
+        kubectl apply -f k8s/configmap.yaml
+        kubectl apply -f k8s/secret.yaml
+        kubectl apply -f k8s/postgres-pvc.yaml
+        kubectl apply -f k8s/service.yaml
+        kubectl apply -f k8s/deployment.yaml
+        
+        # Update image tag in deployment
+        kubectl set image deployment/django-deployment \
+          django-app=${{ needs.build-and-push.outputs.image-tag }} \
+          -n user-management
+        
+        # Wait for rollout
+        kubectl rollout status deployment/django-deployment -n user-management --timeout=600s
+        
+        # Verify deployment
+        kubectl get pods -n user-management
+        kubectl get services -n user-management
+
+  notify:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always() && (needs.deploy-staging.result != 'skipped' || needs.deploy-production.result != 'skipped')
+    
+    steps:
+    - name: Notify Success
+      if: needs.deploy-staging.result == 'success' || needs.deploy-production.result == 'success'
+      run: |
+        echo "✅ Deployment successful!"
+        
+    - name: Notify Failure  
+      if: needs.deploy-staging.result == 'failure' || needs.deploy-production.result == 'failure'
+      run: |
+        echo "❌ Deployment failed!"
+        exit 1

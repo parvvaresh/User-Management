@@ -12,7 +12,7 @@ services:
       POSTGRES_USER: ${DJANGO_DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DJANGO_DB_PASSWORD:-postgres}
     ports:
-      - "5432:5432"
+      - "23867:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -56,7 +56,7 @@ services:
       # TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       # TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER}
     ports:
-      - "8000:8000"
+      - "28492:8000"
     volumes:
       - .:/app
       - /app/__pycache__

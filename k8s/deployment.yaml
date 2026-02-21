@@ -1,48 +1,3 @@
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: user-management
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: django-config
-  namespace: user-management
-data:
-  DEBUG: "False"
-  DJANGO_ALLOWED_HOSTS: "*"
-  DJANGO_DB_ENGINE: "django.db.backends.postgresql"
-  DJANGO_DB_NAME: "user_management"
-  DJANGO_DB_USER: "postgres"
-  DJANGO_DB_HOST: "postgres-service"
-  DJANGO_DB_PORT: "5432"
-  SMS_PROVIDER: "mock"
-  SMS_SENDER_ID: "UserManagement"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: django-secrets
-  namespace: user-management
-type: Opaque
-data:
-  DJANGO_SECRET_KEY: ZGV2LWluc2VjdXJlLWtleS1jaGFuZ2UtaW4tcHJvZHVjdGlvbg==  # dev-insecure-key-change-in-production
-  DJANGO_DB_PASSWORD: cG9zdGdyZXM=  # postgres
-  SMS_API_KEY: ZGV2LWFwaS1rZXk=  # dev-api-key
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: postgres-pvc
-  namespace: user-management
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -103,19 +58,6 @@ spec:
           persistentVolumeClaim:
             claimName: postgres-pvc
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: postgres-service
-  namespace: user-management
-spec:
-  type: ClusterIP
-  selector:
-    app: postgres
-  ports:
-    - port: 5432
-      targetPort: 5432
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -170,36 +112,3 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: django-service
-  namespace: user-management
-spec:
-  type: ClusterIP
-  selector:
-    app: django-app
-  ports:
-    - port: 80
-      targetPort: 8000
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: django-ingress
-  namespace: user-management
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-spec:
-  rules:
-    - host: user-management.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: django-service
-                port:
-                  number: 80
